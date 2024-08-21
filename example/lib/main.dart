@@ -15,7 +15,7 @@ class MyApp extends StatefulWidget {
 class _MyAppState extends State<MyApp> {
   TextEditingController _textEditingController = TextEditingController();
 
-  StreamSubscription<double> _subscription;
+  late StreamSubscription<double> _subscription;
 
   @override
   void initState() {
