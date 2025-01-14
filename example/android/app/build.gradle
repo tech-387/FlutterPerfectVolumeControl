@@ -25,6 +25,8 @@ apply plugin: 'com.android.application'
 apply from: "$flutterRoot/packages/flutter_tools/gradle/flutter.gradle"
 
 android {
+
+    namespace "top.huic.perfect_volume_control.perfect_volume_control_example"
     compileSdkVersion flutter.compileSdkVersion
 
     defaultConfig {
