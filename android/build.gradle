@@ -22,6 +22,8 @@ rootProject.allprojects {
 apply plugin: 'com.android.library'
 
 android {
+
+    namespace "top.huic.perfect_volume_control.perfect_volume_control"
     compileSdkVersion 34
 
     defaultConfig {
