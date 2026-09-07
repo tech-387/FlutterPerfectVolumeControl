@@ -1,28 +1,9 @@
 group 'top.huic.perfect_volume_control.perfect_volume_control'
 version '1.0'
 
-buildscript {
-    repositories {
-        google()
-        jcenter()
-    }
-
-    dependencies {
-        classpath 'com.android.tools.build:gradle:7.3.0'
-    }
-}
-
-rootProject.allprojects {
-    repositories {
-        google()
-        jcenter()
-    }
-}
-
 apply plugin: 'com.android.library'
 
 android {
-
     namespace "top.huic.perfect_volume_control.perfect_volume_control"
     compileSdkVersion 34
 
