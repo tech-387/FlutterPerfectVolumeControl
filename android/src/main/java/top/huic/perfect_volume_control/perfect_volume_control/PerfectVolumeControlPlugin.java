@@ -7,8 +7,15 @@ import android.content.IntentFilter;
 import android.media.AudioManager;
 
 import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
+import androidx.lifecycle.DefaultLifecycleObserver;
+import androidx.lifecycle.Lifecycle;
+import androidx.lifecycle.LifecycleOwner;
 
 import io.flutter.embedding.engine.plugins.FlutterPlugin;
+import io.flutter.embedding.engine.plugins.activity.ActivityAware;
+import io.flutter.embedding.engine.plugins.activity.ActivityPluginBinding;
+import io.flutter.embedding.engine.plugins.lifecycle.HiddenLifecycleReference;
 import io.flutter.plugin.common.MethodCall;
 import io.flutter.plugin.common.MethodChannel;
 import io.flutter.plugin.common.MethodChannel.MethodCallHandler;
@@ -17,12 +24,15 @@ import io.flutter.plugin.common.MethodChannel.Result;
 /**
  * PerfectVolumeControlPlugin
  */
-public class PerfectVolumeControlPlugin implements FlutterPlugin, MethodCallHandler {
+public class PerfectVolumeControlPlugin
+        implements FlutterPlugin, ActivityAware, MethodCallHandler, DefaultLifecycleObserver {
     /// The MethodChannel that will the communication between Flutter and native Android
     ///
     /// This local reference serves to register the plugin with the Flutter Engine and unregister it
     /// when the Flutter Engine is detached from the Activity
     private MethodChannel channel;
+
+    private Context applicationContext;
 
     /**
      * 音频管理器
@@ -34,17 +44,100 @@ public class PerfectVolumeControlPlugin implements FlutterPlugin, MethodCallHand
      */
     private Boolean hideUI = false;
 
+    /**
+     * Registered only while the host activity is started. VOLUME_CHANGED_ACTION
+     * is a frequent non-ordered broadcast; on Android 13 the system keeps
+     * sending it to a frozen cached process until its binder buffer fills, then
+     * kills the app with CannotDeliverBroadcastException. Engines without an
+     * activity (WorkManager, downloader callbacks) never register one.
+     */
+    @Nullable
+    private VolumeReceiver volumeReceiver;
+
+    @Nullable
+    private Lifecycle activityLifecycle;
+
+    /**
+     * Last volume handed to Dart, used to resync after changes made while the
+     * receiver was unregistered. Null until Dart first reads the volume.
+     */
+    @Nullable
+    private Double lastVolume;
+
     @Override
     public void onAttachedToEngine(@NonNull FlutterPluginBinding flutterPluginBinding) {
         channel = new MethodChannel(flutterPluginBinding.getBinaryMessenger(), "perfect_volume_control");
         channel.setMethodCallHandler(this);
-        audioManager = (AudioManager) flutterPluginBinding.getApplicationContext().getSystemService(Context.AUDIO_SERVICE);
+        applicationContext = flutterPluginBinding.getApplicationContext();
+        audioManager = (AudioManager) applicationContext.getSystemService(Context.AUDIO_SERVICE);
+    }
 
+    @Override
+    public void onAttachedToActivity(@NonNull ActivityPluginBinding binding) {
+        activityLifecycle = ((HiddenLifecycleReference) binding.getLifecycle()).getLifecycle();
+        activityLifecycle.addObserver(this);
+    }
+
+    @Override
+    public void onDetachedFromActivityForConfigChanges() {
+        onDetachedFromActivity();
+    }
+
+    @Override
+    public void onReattachedToActivityForConfigChanges(@NonNull ActivityPluginBinding binding) {
+        onAttachedToActivity(binding);
+    }
+
+    @Override
+    public void onDetachedFromActivity() {
+        if (activityLifecycle != null) {
+            activityLifecycle.removeObserver(this);
+            activityLifecycle = null;
+        }
+        unregisterVolumeReceiver();
+    }
+
+    @Override
+    public void onStart(@NonNull LifecycleOwner owner) {
+        Double previous = lastVolume;
+        registerVolumeReceiver();
+        if (previous != null) {
+            double current = readVolume();
+            if (current != previous) {
+                channel.invokeMethod("volumeChangeListener", current);
+            }
+        }
+    }
+
+    @Override
+    public void onStop(@NonNull LifecycleOwner owner) {
+        unregisterVolumeReceiver();
+    }
+
+    private void registerVolumeReceiver() {
+        if (volumeReceiver != null) {
+            return;
+        }
         // 注册音量监听
-        VolumeReceiver volumeReceiver = new VolumeReceiver();
+        volumeReceiver = new VolumeReceiver();
         IntentFilter filter = new IntentFilter();
         filter.addAction("android.media.VOLUME_CHANGED_ACTION");
-        flutterPluginBinding.getApplicationContext().registerReceiver(volumeReceiver, filter);
+        applicationContext.registerReceiver(volumeReceiver, filter);
+    }
+
+    private void unregisterVolumeReceiver() {
+        if (volumeReceiver == null) {
+            return;
+        }
+        applicationContext.unregisterReceiver(volumeReceiver);
+        volumeReceiver = null;
+    }
+
+    private double readVolume() {
+        int max = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC);
+        int current = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC);
+        lastVolume = (double) current / (double) max;
+        return lastVolume;
     }
 
     @Override
@@ -68,15 +161,14 @@ public class PerfectVolumeControlPlugin implements FlutterPlugin, MethodCallHand
     @Override
     public void onDetachedFromEngine(@NonNull FlutterPluginBinding binding) {
         channel.setMethodCallHandler(null);
+        unregisterVolumeReceiver();
     }
 
     /**
      * 获得音量
      */
     public void getVolume(@NonNull MethodCall call, @NonNull Result result) {
-        int max = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC);
-        int current = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC);
-        result.success((double) current / (double) max);
+        result.success(readVolume());
     }
 
     /**
@@ -108,9 +200,7 @@ public class PerfectVolumeControlPlugin implements FlutterPlugin, MethodCallHand
         @Override
         public void onReceive(Context context, Intent intent) {
             if (intent.getAction().equals("android.media.VOLUME_CHANGED_ACTION")) {
-                int max = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC);
-                int current = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC);
-                channel.invokeMethod("volumeChangeListener", (double) current / (double) max);
+                channel.invokeMethod("volumeChangeListener", readVolume());
             }
         }
     }
