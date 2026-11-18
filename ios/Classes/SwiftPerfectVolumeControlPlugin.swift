@@ -10,8 +10,22 @@ public class SwiftPerfectVolumeControlPlugin: NSObject, FlutterPlugin {
     /// Flutter 消息通道
     var channel: FlutterMethodChannel?;
 
+    /// Whether this instance is registered as a KVO observer of `outputVolume`.
+    private var isObservingOutputVolume = false
+
     override init() {
         super.init();
+    }
+
+    /// AVAudioSession keeps an unretained pointer to its KVO observers. Every
+    /// FlutterEngine (including the short-lived background ones started by
+    /// workmanager or home_widget) creates its own instance of this plugin, so
+    /// the observer must be removed before the instance is freed. Otherwise the
+    /// next AVAudioSession property change crashes with EXC_BAD_ACCESS.
+    deinit {
+        if isObservingOutputVolume {
+            AVAudioSession.sharedInstance().removeObserver(self, forKeyPath: "outputVolume")
+        }
     }
 
     public static func register(with registrar: FlutterPluginRegistrar) {
@@ -87,6 +101,7 @@ public class SwiftPerfectVolumeControlPlugin: NSObject, FlutterPlugin {
         do {
             try AVAudioSession.sharedInstance().setActive(true)
             AVAudioSession.sharedInstance().addObserver(self, forKeyPath: "outputVolume", options: [.new, .old], context: nil)
+            isObservingOutputVolume = true
         } catch let error as NSError {
             print("\(error)")
         }
